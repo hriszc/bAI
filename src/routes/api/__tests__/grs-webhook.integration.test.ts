@@ -5,10 +5,15 @@ vi.mock("@/env/server", () => ({
 }));
 
 const mocks = vi.hoisted(() => ({
+  mockGenerateImageFallback: vi.fn(),
   mockFilterSafeImageUrls: vi.fn(
     (urls: string[]): Promise<{ safeUrls: string[]; blockedUrls: string[] }> =>
       Promise.resolve({ safeUrls: urls, blockedUrls: [] }),
   ),
+}));
+
+vi.mock("@/lib/ai/fallback", () => ({
+  generateImageFallback: mocks.mockGenerateImageFallback,
 }));
 
 vi.mock("@/lib/ai/nsfw", async (importOriginal) => {
@@ -51,6 +56,15 @@ async function makeRequest(overrides?: { body?: Record<string, unknown> }): Prom
   } as unknown as Request;
 }
 
+function getKvPutValue(
+  mockKv: { put: ReturnType<typeof vi.fn> },
+  key: string,
+): Record<string, unknown> {
+  const call = mockKv.put.mock.calls.find(([putKey]) => putKey === key);
+  if (!call) throw new Error(`Missing KV put for ${key}`);
+  return JSON.parse(call[1] as string) as Record<string, unknown>;
+}
+
 describe("handleGrsWebhook", () => {
   let mockKv: { get: ReturnType<typeof vi.fn>; put: ReturnType<typeof vi.fn> };
 
@@ -59,6 +73,7 @@ describe("handleGrsWebhook", () => {
       get: vi.fn(),
       put: vi.fn().mockResolvedValue(undefined),
     };
+    mocks.mockGenerateImageFallback.mockRejectedValue(new Error("fallback unavailable"));
     mocks.mockFilterSafeImageUrls.mockImplementation((urls: string[]) =>
       Promise.resolve({ safeUrls: urls, blockedUrls: [] }),
     );
@@ -179,9 +194,85 @@ describe("handleGrsWebhook", () => {
     );
     expect(resp.status).toBe(200);
 
-    const putValue = JSON.parse(mockKv.put.mock.calls[0][1] as string);
+    const putValue = getKvPutValue(mockKv, "grs:grs-task-002");
     expect(putValue.status).toBe("failed");
     expect(putValue.error).toBe("NSFW content filtered");
+  });
+
+  it("uses Workers AI fallback when GRS webhook reports progress -1 failure", async () => {
+    mockKv.get.mockResolvedValue(
+      JSON.stringify({
+        userId: "u1",
+        status: "processing",
+        prompt: "a cinematic product shot",
+        aspectRatio: "1:1",
+        createdAt: Date.now(),
+      }),
+    );
+    mocks.mockGenerateImageFallback.mockResolvedValue({
+      urls: ["https://workers-ai.example/fallback.png"],
+    });
+
+    const resp = await handleGrsWebhook(
+      await makeRequest({
+        body: {
+          id: "13-a5b81b67-ea63-469c-8b0b-e840e9b74420",
+          progress: -1,
+          status: "failed",
+          failure_reason: "error",
+          error: "generate image failed",
+          results: null,
+        },
+      }),
+    );
+
+    expect(resp.status).toBe(200);
+    expect(mocks.mockGenerateImageFallback).toHaveBeenCalledWith(
+      "a cinematic product shot",
+      "1:1",
+      1,
+    );
+    const putValue = getKvPutValue(mockKv, "grs:13-a5b81b67-ea63-469c-8b0b-e840e9b74420");
+    expect(putValue.status).toBe("succeeded");
+    expect(putValue.urls).toEqual(["https://workers-ai.example/fallback.png"]);
+    expect(putValue.fallback).toBe(true);
+    expect(putValue.error).toBeUndefined();
+  });
+
+  it("uses Workers AI fallback when GRS succeeds without image URLs", async () => {
+    mockKv.get.mockResolvedValue(
+      JSON.stringify({
+        userId: "u1",
+        status: "processing",
+        prompt: "a minimal packaging render",
+        aspectRatio: "4:3",
+        createdAt: Date.now(),
+      }),
+    );
+    mocks.mockGenerateImageFallback.mockResolvedValue({
+      urls: ["https://workers-ai.example/no-url-fallback.png"],
+    });
+
+    const resp = await handleGrsWebhook(
+      await makeRequest({
+        body: {
+          id: "grs-no-urls",
+          status: "succeeded",
+          results: null,
+        },
+      }),
+    );
+
+    expect(resp.status).toBe(200);
+    expect(mocks.mockGenerateImageFallback).toHaveBeenCalledWith(
+      "a minimal packaging render",
+      "4:3",
+      1,
+    );
+    const putValue = getKvPutValue(mockKv, "grs:grs-no-urls");
+    expect(putValue.status).toBe("succeeded");
+    expect(putValue.urls).toEqual(["https://workers-ai.example/no-url-fallback.png"]);
+    expect(putValue.fallback).toBe(true);
   });
 
   it("stores failed status when succeeded webhook output fails content safety", async () => {
