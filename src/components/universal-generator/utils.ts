@@ -1,12 +1,12 @@
 import type { VariableGroup, PromptCombination, AiBlock } from "./types";
 
 export function extractAiBlocks(template: string): AiBlock[] {
-  const regex = /\{\*(.+?)\*\}/g;
+  const regex = /(?:\{\*(.+?)\*\}|｛\*(.+?)\*｝)/g;
   const blocks: AiBlock[] = [];
   let match: RegExpExecArray | null;
   while ((match = regex.exec(template)) !== null) {
     const raw = match[0];
-    const description = match[1].trim();
+    const description = (match[1] ?? match[2] ?? "").trim();
     if (description) {
       blocks.push({ raw, description });
     }

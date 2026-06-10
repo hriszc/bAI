@@ -326,10 +326,23 @@ describe("extractAiBlocks", () => {
     ]);
   });
 
+  it("extracts ai blocks with full-width braces", () => {
+    expect(extractAiBlocks("｛*three colors*｝")).toEqual([
+      { raw: "｛*three colors*｝", description: "three colors" },
+    ]);
+  });
+
   it("extracts multiple ai blocks", () => {
     expect(extractAiBlocks("{*a*} and {*b c*}")).toEqual([
       { raw: "{*a*}", description: "a" },
       { raw: "{*b c*}", description: "b c" },
+    ]);
+  });
+
+  it("extracts mixed half-width and full-width ai blocks", () => {
+    expect(extractAiBlocks("{*a*} and ｛*b c*｝")).toEqual([
+      { raw: "{*a*}", description: "a" },
+      { raw: "｛*b c*｝", description: "b c" },
     ]);
   });
 
@@ -367,6 +380,12 @@ describe("extractAiBlocks", () => {
       { raw: "{*三种颜色*}", description: "三种颜色" },
     ]);
   });
+
+  it("handles Chinese descriptions with full-width braces", () => {
+    expect(extractAiBlocks("｛*三种颜色*｝")).toEqual([
+      { raw: "｛*三种颜色*｝", description: "三种颜色" },
+    ]);
+  });
 });
 
 // ============================================================
@@ -391,5 +410,11 @@ describe("replaceAiBlock", () => {
     expect(
       replaceAiBlock("A {*colors*} watch in {{leather, steel}}", "{*colors*}", ["red", "blue"]),
     ).toBe("A {{red, blue}} watch in {{leather, steel}}");
+  });
+
+  it("replaces full-width ai blocks with variable syntax", () => {
+    expect(replaceAiBlock("A ｛*colors*｝ watch", "｛*colors*｝", ["red", "blue"])).toBe(
+      "A {{red, blue}} watch",
+    );
   });
 });
