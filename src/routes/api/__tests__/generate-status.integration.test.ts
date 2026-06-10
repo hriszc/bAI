@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => {
   const mockGetSession = vi.fn();
   const mockPollReplicate = vi.fn();
   const mockPollGrsai = vi.fn();
+  const mockGenerateImageFallback = vi.fn();
+  const mockGenerateVideoFallback = vi.fn();
   const mockMirrorImageToR2 = vi.fn((url: string) => Promise.resolve(url));
   const mockFilterSafeImageUrls = vi.fn(
     (urls: string[]): Promise<{ safeUrls: string[]; blockedUrls: string[] }> =>
@@ -17,6 +19,8 @@ const mocks = vi.hoisted(() => {
     mockGetSession,
     mockPollReplicate,
     mockPollGrsai,
+    mockGenerateImageFallback,
+    mockGenerateVideoFallback,
     mockMirrorImageToR2,
     mockFilterSafeImageUrls,
   };
@@ -35,6 +39,11 @@ vi.mock("@/lib/rate-limit", () => ({
 vi.mock("@/lib/ai", () => ({
   pollReplicatePrediction: mocks.mockPollReplicate,
   pollGrsaiResult: mocks.mockPollGrsai,
+}));
+
+vi.mock("@/lib/ai/fallback", () => ({
+  generateImageFallback: mocks.mockGenerateImageFallback,
+  generateVideoFallback: mocks.mockGenerateVideoFallback,
 }));
 
 vi.mock("@/lib/cloudflare/r2", () => ({
@@ -83,6 +92,8 @@ describe("handleGenerateStatus", () => {
     vi.clearAllMocks();
     mocks.mockGetSession.mockResolvedValue({ user: { id: "u1" } });
     mocks.mockPollGrsai.mockResolvedValue({ status: "processing", urls: null, error: null });
+    mocks.mockGenerateImageFallback.mockRejectedValue(new Error("fallback unavailable"));
+    mocks.mockGenerateVideoFallback.mockRejectedValue(new Error("fallback unavailable"));
     mocks.mockFilterSafeImageUrls.mockImplementation((urls: string[]) =>
       Promise.resolve({ safeUrls: urls, blockedUrls: [] }),
     );
@@ -274,6 +285,81 @@ describe("handleGenerateStatus", () => {
     };
     expect(body.results[0].status).toBe("error");
     expect(body.results[0].error).toBe("Network error");
+  });
+
+  it("uses Workers AI fallback when a Replicate prediction fails after task creation", async () => {
+    const db = createTestDb();
+    applyMigrations(db);
+    seedUser(db, { id: "u1", credits: 60 });
+
+    const genId = "gen-fallback-replicate";
+    db.insert(generation)
+      .values({
+        id: genId,
+        userId: "u1",
+        promptTemplate: "fallback prompt",
+        resolvedPrompts: JSON.stringify(["resolved fallback prompt"]),
+        variableGroups: JSON.stringify([]),
+        resultUrls: JSON.stringify([]),
+        model: "z-image-fast",
+        creditsUsed: 10,
+        createdAt: Math.floor(Date.now() / 1000),
+      })
+      .run();
+
+    const kvStore = new Map<string, string>();
+    kvStore.set(
+      "gen:pred-fallback",
+      JSON.stringify({ generationId: genId, userId: "u1", creditsUsed: 10 }),
+    );
+    const mockKv = {
+      get: vi.fn((key: string) => Promise.resolve(kvStore.get(key) ?? null)),
+      put: vi.fn((key: string, value: string) => {
+        kvStore.set(key, value);
+        return Promise.resolve();
+      }),
+    };
+    (globalThis as Record<string, unknown>).__env__ = {
+      batchlyai_kv: mockKv,
+      batchlyai_db: db,
+    };
+
+    mocks.mockPollReplicate.mockResolvedValue({
+      id: "pred-fallback",
+      status: "failed",
+      urls: null,
+      error: "primary provider failed",
+    });
+    mocks.mockGenerateImageFallback.mockResolvedValue({
+      urls: ["https://workers-ai.example/fallback.png"],
+    });
+
+    const resp = await handleGenerateStatus(makeRequest("ids=pred-fallback&type=replicate"));
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as {
+      results: { status: string; urls: string[]; fallback?: boolean; creditsRemaining?: number }[];
+    };
+    expect(body.results[0]).toMatchObject({
+      status: "succeeded",
+      urls: ["https://workers-ai.example/fallback.png"],
+      fallback: true,
+    });
+    expect(body.results[0].creditsRemaining).toBeUndefined();
+    expect(mocks.mockGenerateImageFallback).toHaveBeenCalledWith(
+      "resolved fallback prompt",
+      "1:1",
+      1,
+    );
+    expect(
+      db.select({ credits: userTable.credits }).from(userTable).where(eq(userTable.id, "u1")).get()
+        ?.credits,
+    ).toBe(60);
+    const row = db
+      .select({ resultUrls: generation.resultUrls })
+      .from(generation)
+      .where(eq(generation.id, genId))
+      .get();
+    expect(JSON.parse(row!.resultUrls)).toEqual(["https://workers-ai.example/fallback.png"]);
   });
 
   it("refunds credits once when a Replicate prediction fails after task creation", async () => {
@@ -620,6 +706,70 @@ describe("handleGenerateStatus", () => {
     expect(body.results[0].error).toBe("output_moderation");
     expect(body.results[0].creditsRemaining).toBe(40);
     expect(JSON.parse(kvStore.get("grs:grs-failed-poll")!).status).toBe("failed");
+  });
+
+  it("uses Workers AI fallback when the GRS result endpoint reports failure", async () => {
+    const db = createTestDb();
+    applyMigrations(db);
+    seedUser(db, { id: "u1", credits: 20 });
+
+    const genId = "gen-grs-fallback";
+    db.insert(generation)
+      .values({
+        id: genId,
+        userId: "u1",
+        promptTemplate: "fallback grs prompt",
+        resolvedPrompts: JSON.stringify(["resolved grs prompt"]),
+        variableGroups: JSON.stringify([]),
+        resultUrls: JSON.stringify([]),
+        model: "z-image-pro",
+        creditsUsed: 20,
+        createdAt: Math.floor(Date.now() / 1000),
+      })
+      .run();
+
+    const kvStore = new Map<string, string>();
+    kvStore.set("grs:grs-fallback", JSON.stringify({ userId: "u1", status: "processing" }));
+    kvStore.set(
+      "gen:grs-fallback",
+      JSON.stringify({ generationId: genId, userId: "u1", creditsUsed: 20 }),
+    );
+    const mockKv = {
+      get: vi.fn((key: string) => Promise.resolve(kvStore.get(key) ?? null)),
+      put: vi.fn((key: string, value: string) => {
+        kvStore.set(key, value);
+        return Promise.resolve();
+      }),
+    };
+    (globalThis as Record<string, unknown>).__env__ = {
+      batchlyai_kv: mockKv,
+      batchlyai_db: db,
+    };
+    mocks.mockPollGrsai.mockResolvedValue({
+      status: "failed",
+      urls: null,
+      error: "upstream error",
+    });
+    mocks.mockGenerateImageFallback.mockResolvedValue({
+      urls: ["https://workers-ai.example/grs-fallback.png"],
+    });
+
+    const resp = await handleGenerateStatus(makeRequest("ids=grs-fallback&type=grs"));
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as {
+      results: { status: string; urls: string[]; fallback?: boolean; creditsRemaining?: number }[];
+    };
+    expect(body.results[0]).toMatchObject({
+      status: "succeeded",
+      urls: ["https://workers-ai.example/grs-fallback.png"],
+      fallback: true,
+    });
+    expect(body.results[0].creditsRemaining).toBeUndefined();
+    expect(mocks.mockGenerateImageFallback).toHaveBeenCalledWith("resolved grs prompt", "1:1", 1);
+    expect(
+      db.select({ credits: userTable.credits }).from(userTable).where(eq(userTable.id, "u1")).get()
+        ?.credits,
+    ).toBe(20);
   });
 
   it("keeps GRS task processing when result polling has a transient error", async () => {

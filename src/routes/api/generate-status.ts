@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { eq, sql } from "drizzle-orm";
 
 import { pollGrsaiResult, pollReplicatePrediction } from "@/lib/ai";
+import { generateImageFallback, generateVideoFallback } from "@/lib/ai/fallback";
 import { CONTENT_SAFETY_BLOCK_MESSAGE, filterSafeImageUrls } from "@/lib/ai/nsfw";
 import { jsonResponse } from "@/lib/api-helpers";
 import { createAuth } from "@/lib/auth/auth";
@@ -36,17 +37,18 @@ interface StatusResult {
   urls: string[] | null;
   error: string | null;
   creditsRemaining?: number;
+  fallback?: boolean;
 }
 
 function mergeUniqueUrls(existing: string[], incoming: string[]): string[] {
   return [...new Set([...existing, ...incoming])];
 }
 
-function parseUrlList(raw: string): string[] {
+function parseStringList(raw: string): string[] {
   try {
     const parsed = JSON.parse(raw) as unknown;
     return Array.isArray(parsed)
-      ? parsed.filter((url): url is string => typeof url === "string")
+      ? parsed.filter((value): value is string => typeof value === "string")
       : [];
   } catch {
     return [];
@@ -200,6 +202,109 @@ async function refundFailedPrediction(
   return updated?.credits;
 }
 
+async function tryFallbackForFailedPrediction(
+  kv: KVNamespace | undefined,
+  predictionId: string,
+  sessionUserId: string | null,
+  failureReason: string,
+): Promise<StatusResult | null> {
+  if (!kv || !sessionUserId) return null;
+
+  const fallbackKey = `fallback:${predictionId}`;
+  const existingRaw = await kv.get(fallbackKey);
+  if (existingRaw) {
+    try {
+      const existing = JSON.parse(existingRaw) as {
+        status?: string;
+        urls?: string[];
+        error?: string;
+      };
+      if (existing.status === "succeeded" && existing.urls?.length) {
+        return {
+          id: predictionId,
+          status: "succeeded",
+          urls: existing.urls,
+          error: null,
+          fallback: true,
+        };
+      }
+      if (existing.status === "failed") return null;
+    } catch {
+      // Ignore malformed fallback cache and try again.
+    }
+  }
+
+  const genData = parseGenerationTaskData(await kv.get(`gen:${predictionId}`));
+  if (!genData?.generationId) return null;
+  if (genData.userId && genData.userId !== sessionUserId) return null;
+
+  const binding = getD1Binding();
+  if (!binding) return null;
+  const db = getDb(binding);
+  const [row] = await db
+    .select({
+      userId: generation.userId,
+      promptTemplate: generation.promptTemplate,
+      resolvedPrompts: generation.resolvedPrompts,
+      model: generation.model,
+      creditsUsed: generation.creditsUsed,
+    })
+    .from(generation)
+    .where(eq(generation.id, genData.generationId))
+    .limit(1);
+  if (!row || row.userId !== sessionUserId) return null;
+
+  const prompt = parseStringList(row.resolvedPrompts)[0] || row.promptTemplate;
+  try {
+    const fbResult = row.model.startsWith("z-video")
+      ? await generateVideoFallback(prompt, "1:1", 5)
+      : await generateImageFallback(prompt, "1:1", 1);
+    const { safeUrls } = await filterSafeImageUrls(fbResult.urls);
+    if (safeUrls.length === 0) {
+      throw new Error(CONTENT_SAFETY_BLOCK_MESSAGE);
+    }
+
+    await kv.put(
+      fallbackKey,
+      JSON.stringify({ status: "succeeded", urls: safeUrls, createdAt: Date.now() }),
+      { expirationTtl: 7 * 24 * 60 * 60 },
+    );
+    await tryUpdateGeneration(kv, predictionId, safeUrls);
+    try {
+      await recordAiCreditSpend({
+        db,
+        userId: sessionUserId,
+        credits: genData.creditsUsed ?? row.creditsUsed,
+        provider: "workers-ai",
+        model: row.model.startsWith("z-video") ? "video-fallback" : "image-fallback",
+        apiCallCount: 1,
+        status: "succeeded",
+        sourceId: genData.generationId,
+        metadata: {
+          primaryModel: row.model,
+          predictionId,
+          failureReason,
+          asyncFallback: true,
+        },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "unknown error";
+      console.error("[credit-audit] Failed to record async fallback spend:", message);
+    }
+
+    return { id: predictionId, status: "succeeded", urls: safeUrls, error: null, fallback: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Workers AI fallback failed";
+    await kv.put(
+      fallbackKey,
+      JSON.stringify({ status: "failed", error: message, createdAt: Date.now() }),
+      { expirationTtl: 60 * 60 },
+    );
+    console.warn(`[gen-status] Async fallback failed for ${predictionId}:`, err);
+    return null;
+  }
+}
+
 async function attachRefundsToFailedResults(
   kv: KVNamespace | undefined,
   results: StatusResult[],
@@ -208,6 +313,13 @@ async function attachRefundsToFailedResults(
   return Promise.all(
     results.map(async (result) => {
       if (!isRefundableStatus(result.status)) return result;
+      const fallbackResult = await tryFallbackForFailedPrediction(
+        kv,
+        result.id,
+        userId,
+        result.error || result.status,
+      );
+      if (fallbackResult) return fallbackResult;
       const creditsRemaining = await refundFailedPrediction(kv, result.id, userId);
       return creditsRemaining == null ? result : { ...result, creditsRemaining };
     }),
@@ -309,7 +421,7 @@ async function tryUpdateGeneration(kv: KVNamespace, predictionId: string, urls: 
       .from(generation)
       .where(eq(generation.id, genData.generationId))
       .limit(1);
-    const mergedUrls = mergeUniqueUrls(parseUrlList(existing?.resultUrls ?? "[]"), r2Urls);
+    const mergedUrls = mergeUniqueUrls(parseStringList(existing?.resultUrls ?? "[]"), r2Urls);
     await db
       .update(generation)
       .set({ resultUrls: JSON.stringify(mergedUrls) })
