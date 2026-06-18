@@ -168,7 +168,7 @@ function WorkDetailPage() {
   const useCase = getWorkUseCase(data);
 
   return (
-    <main className="mx-auto max-w-[980px] px-4 py-8">
+    <main className="mx-auto max-w-[980px] px-4 pt-16 pb-8 sm:py-8">
       <a
         href="/discover"
         className="mb-6 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
@@ -188,7 +188,7 @@ function WorkDetailPage() {
           {data.description}
         </p>
       )}
-      <div className="mt-2 flex items-center gap-3 text-sm text-muted-foreground">
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
         <span>{data.authorName}</span>
         {data.category && (
           <span className="rounded bg-muted/50 px-1.5 py-0.5 text-xs">{categoryName}</span>
@@ -219,16 +219,16 @@ function WorkDetailPage() {
         <p className="mt-2 text-sm leading-6 text-muted-foreground">{t("remixWorkDescription")}</p>
       </section>
 
-      <div className="mt-6 flex items-center gap-4">
+      <div className="mt-6 flex flex-wrap items-center gap-2 sm:gap-4">
         <button
           onClick={handleLike}
-          className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm ${liked ? "bg-red-50 text-red-500" : "bg-muted/30 text-muted-foreground hover:text-red-500"}`}
+          className={`inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm sm:flex-none ${liked ? "bg-red-50 text-red-500" : "bg-muted/30 text-muted-foreground hover:text-red-500"}`}
         >
           <HeartIcon className={`size-4 ${liked ? "fill-red-500" : ""}`} /> {t("like")} {likeCount}
         </button>
         <button
           onClick={handleRemix}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-muted/30 px-3 py-2 text-sm text-muted-foreground hover:text-accent-blue"
+          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-muted/30 px-3 py-2 text-sm text-muted-foreground hover:text-accent-blue sm:flex-none"
         >
           <Repeat2Icon className="size-4" /> {t("remix")} {data.remixCount}
         </button>
@@ -237,7 +237,7 @@ function WorkDetailPage() {
             void navigator.clipboard.writeText(promptToCopy);
             toast.success(t("copied"));
           }}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
+          className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-muted/30 px-3 py-2 text-sm text-muted-foreground sm:w-auto"
         >
           <CopyIcon className="size-4" /> {t("copyPrompt")}
         </button>

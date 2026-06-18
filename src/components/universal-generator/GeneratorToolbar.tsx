@@ -45,6 +45,10 @@ interface GeneratorToolbarProps {
   creditsRemaining: number | null;
 }
 
+function ToolbarDivider() {
+  return <span className="hidden text-muted-foreground/40 sm:inline">|</span>;
+}
+
 export function GeneratorToolbar({
   isGuest = false,
   showVariables,
@@ -74,7 +78,7 @@ export function GeneratorToolbar({
   const isVideo = modelInfo?.category === "video";
 
   return (
-    <div className="flex flex-wrap items-center gap-3 border-t bg-muted/20 px-4 py-2.5 text-sm">
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-t bg-muted/20 px-3 py-2.5 text-sm sm:gap-3 sm:px-4">
       <div className="relative">
         <button
           type="button"
@@ -122,7 +126,7 @@ export function GeneratorToolbar({
         )}
       </div>
 
-      <span className="text-muted-foreground/40">|</span>
+      <ToolbarDivider />
 
       {canEditGroups && (
         <>
@@ -137,7 +141,7 @@ export function GeneratorToolbar({
           >
             {showVariables ? t("hideGroups") : t("editGroups")}
           </button>
-          <span className="text-muted-foreground/40">|</span>
+          <ToolbarDivider />
         </>
       )}
 
@@ -158,7 +162,7 @@ export function GeneratorToolbar({
       {/* Aspect ratio: shown for image and video, hidden for text */}
       {!isText && (
         <>
-          <span className="text-muted-foreground/40">|</span>
+          <ToolbarDivider />
           <div className="flex items-center gap-1">
             {ASPECT_RATIOS.map((ratio) => (
               <button
@@ -178,7 +182,7 @@ export function GeneratorToolbar({
         </>
       )}
 
-      <span className="text-muted-foreground/40">|</span>
+      <ToolbarDivider />
 
       {/* Image: quantity selector */}
       {isImage && (
@@ -243,14 +247,14 @@ export function GeneratorToolbar({
         </div>
       )}
 
-      <span className="text-muted-foreground/40">|</span>
+      <ToolbarDivider />
 
       <span className="whitespace-nowrap text-muted-foreground">
         {hasGroups && `${groupCount} ${t("groups")} · `}
         {comboCount} {t("variants")}
       </span>
 
-      <span className="text-muted-foreground/40">|</span>
+      <ToolbarDivider />
 
       <span className="whitespace-nowrap text-muted-foreground">
         {t("estimatedCredits")}：{creditEstimate} {t("credits")}
@@ -258,7 +262,7 @@ export function GeneratorToolbar({
 
       {creditsRemaining != null && (
         <>
-          <span className="text-muted-foreground/40">|</span>
+          <ToolbarDivider />
           <span className="whitespace-nowrap text-muted-foreground">
             {t("credits")}: {creditsRemaining}
           </span>

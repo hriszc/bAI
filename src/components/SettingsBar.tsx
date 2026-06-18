@@ -164,7 +164,7 @@ export function SettingsBar() {
   }, [referralStats, t]);
 
   return (
-    <div className="fixed top-0 right-0 z-50 flex items-center gap-1 p-3">
+    <div className="fixed top-0 right-0 left-0 z-50 flex items-center justify-end gap-1 p-3">
       {sessionLoading ? (
         <div className="flex h-8 w-24 animate-pulse items-center rounded-full bg-muted/80" />
       ) : session?.user ? (
@@ -173,10 +173,10 @@ export function SettingsBar() {
             <button
               onClick={() => setShowPurchase(!showPurchase)}
               title={t("buyCreditsTitle")}
-              className="inline-flex h-8 items-center justify-center gap-1 rounded-full bg-accent-blue/15 px-2.5 text-xs font-medium text-accent-blue backdrop-blur-sm transition-colors hover:bg-accent-blue/25"
+              className="inline-flex h-8 items-center justify-center gap-1 rounded-full bg-accent-blue/15 px-2 text-xs font-medium text-accent-blue backdrop-blur-sm transition-colors hover:bg-accent-blue/25 sm:px-2.5"
             >
               <PlusIcon className="size-3" />
-              {t("buyCredits")}
+              <span className="hidden sm:inline">{t("buyCredits")}</span>
             </button>
             {showPurchase && <CreditPurchasePopover onClose={() => setShowPurchase(false)} />}
           </div>
@@ -231,15 +231,18 @@ export function SettingsBar() {
             <span className="font-semibold text-accent-blue">
               {((session.user as Record<string, unknown>).credits as number) ?? 0}
             </span>
-            {t("credits")}
+            <span className="hidden sm:inline">{t("credits")}</span>
           </span>
           <div className="relative">
             <button
               onClick={() => setShowUserMenu(!showUserMenu)}
               className="inline-flex h-8 items-center justify-center gap-1.5 rounded-full bg-muted/80 px-2.5 text-xs font-medium text-muted-foreground backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground"
+              aria-label={session.user.name || session.user.email || t("myWorks")}
             >
               <UserIcon className="size-3" />
-              {session.user.name || session.user.email}
+              <span className="hidden max-w-36 truncate sm:inline">
+                {session.user.name || session.user.email}
+              </span>
               <ChevronDownIcon className="size-3" />
             </button>
             {showUserMenu && (

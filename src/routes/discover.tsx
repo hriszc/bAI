@@ -180,9 +180,9 @@ export function DiscoverPage() {
   const templates = fallback?.templates.length ? fallback.templates : serverTemplates;
 
   return (
-    <main className="mx-auto max-w-[980px] px-4 py-8">
+    <main className="mx-auto max-w-[980px] px-4 pt-16 pb-8 sm:py-8">
       <h1 className="mb-6 text-3xl font-bold text-foreground">{t("discover")}</h1>
-      <div className="mb-6 flex gap-1.5 overflow-x-auto">
+      <div className="mb-6 flex flex-wrap gap-1.5 sm:flex-nowrap sm:overflow-x-auto">
         {TABS.map((tab) => (
           <button
             key={tab}
@@ -239,7 +239,7 @@ export function DiscoverPage() {
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-5">
           {visibleWorks.map((w) => (
             <a
               key={w.id}

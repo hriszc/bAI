@@ -550,7 +550,7 @@ export function HomePage({ forceLanguage, showTaaftBadge = false }: HomePageProp
         className={`mx-auto max-w-[980px] px-4 ${
           hasResults
             ? "py-8 sm:py-10"
-            : "flex min-h-[100svh] flex-col justify-center py-10 sm:py-14"
+            : "pt-28 pb-8 sm:flex sm:min-h-[100svh] sm:flex-col sm:justify-center sm:py-14"
         }`}
       >
         <div className="mb-2 flex justify-center">
